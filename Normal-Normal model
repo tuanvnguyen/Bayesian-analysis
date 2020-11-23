@@ -1,0 +1,151 @@
+# Bayesian normal prior to
+# posterior function
+# steve frost July 2020
+
+BayesPrPnN <- function(a,b,c,d, mu.prior, sd.prior, postProb) 
+          {
+library(stats)
+ observed <- array(c(a,c,a+c,b,d,b+d,a+b,c+d,a+b+c+d),
+       dim = c(3,3),
+       dimnames = list(
+       Intervention = c("Yes","No","Total"),
+       Outcome = c("Yes", "No","Total")))
+           	 
+N1 <- a + b
+N2 <- c + d
+M1 <- a + c
+M2 <- b + d
+ 
+RR <- round((a/N1) / (c/N2),3)
+OR <- round((a * d)/(c * b),3)
+ 
+se.log.rr <- sqrt(b/(a*N1) + d/(c*N2))
+se.log.or <- sqrt(1/a + 1/b + 1/c + 1/d)
+
+lci.rr <- round(exp(log(RR) - 1.96 * se.log.rr),3)
+uci.rr <- round(exp(log(RR) + 1.96 * se.log.rr),3)
+lci.or <- round(exp(log(OR) - 1.96 * se.log.or),3)
+uci.or <- round(exp(log(OR) + 1.96 * se.log.or),3)
+
+p1 <- a/N1
+p2 <- c/N2
+delta <- p1 - p2
+se.delta <- (((p1 * (1-p1))/N1) + ((p2 * (1-p2))/N2))^0.5
+t <- qt(df = N1 + N2 - 1, p = 0.975)
+lcl.delta <- round(delta - (t * se.delta),5)
+ucl.delta <- round(delta + (t * se.delta),5)
+
+
+mu.lik <- (a/b) / (c/d)
+sd.lik <- (1/a + 1/b + 1/c + 1/d)^0.5
+
+# Using MCMCpack
+library(MCMCpack) 
+set.seed(12345)
+posterior <- MCnormalnormal(y = log(mu.lik), 
+                            sigma2 = sd.lik^2, 
+                            mu0 = log(mu.prior), 
+                            tau20 = sd.prior^2, mc = 20000)
+mu.post <- mean(posterior)
+sd.post <- sd(posterior)
+lcl.post <- quantile(posterior, prob = 0.025)
+ucl.post <- quantile(posterior, prob = 0.975)
+
+postP <- round(pnorm(log(postProb), median(posterior), sd(posterior), lower.tail = T),3)
+pValue.NE <- pnorm(log(mu.lik)/sd.lik, lower.tail = T) * 2
+pValue.E <- 1 - pValue.NE
+
+# Bayesian A/B test with default settings
+set.seed(12345)
+# Using abtest
+library(abtest)
+data <- list(y1 = a, n1 = a+b, y2 = c, n2 = c+d)
+prior_probs <- c(0,0.5,0.5,0)
+names(prior_probs) <- c('H1','H+','H-','H0')
+ab <- ab_test(data = data, prior_par = list(mu_psi = log(mu.prior),
+                                            sigma_psi = sd.prior,
+                                            mu_beta = 0,
+                                            sigma_beta = 1),
+                                            prior_prob = prior_probs,
+                                            nsample = 20000,
+                                            posterior = T)
+
+cat("\n------------------------------------------------------------------------------")
+cat("\nTrial Data:")
+cat("\n")
+print(observed)
+cat("\nRate of outcome among intervention group (p1) = ",round(a/N1,4), sep = '')
+cat("\nRate of outcome among control group (p2) = ",round(c/N2,4), sep = '')
+cat("\nRelative Risk = ",RR, " 95% CI = ", lci.rr, ' to ', uci.rr, sep = '')
+cat("\nOdds Ratio = ",OR, " 95% CI = ", lci.or, ' to ', uci.or, sep = '')
+tab <- array(c(a,b,c,d), dim = c(2,2))
+chi2 <- chisq.test(tab, correct = F)
+fishers.exact <- fisher.test(tab)
+cat("\nchi2 p-value = ",round(chi2$p.value,4), sep = '')
+cat("\nFisher's exact p-value = ",round(fishers.exact$p.value,4), sep = '')
+cat("\n------------------------------------------------------------------------------")
+cat("\nBayesian Conjugate normal analysis - Prior to Posterior Analysis: ")
+cat("\nPrior distribution")
+cat("\nmean prior = ",round(mu.prior,4), " (95% CI ",round(exp(log(mu.prior) - (1.96 * sd.prior)),2)," to ",
+                                                      round(exp(log(mu.prior) + (1.96 * sd.prior)),2), ")", sep = '')
+ cat("\nsd prior (log) = ",round(sd.prior,4), sep = '')
+ cat("\nlikelihood (new data) = ",round(mu.lik,2)," (95% CI ",round(exp(log(mu.lik) - (1.96 * sd.lik)),2),
+                                                 " to ", round(exp(log(mu.lik) + (1.96 * sd.lik)),2), 
+                                                  "), p-value = ", round(pValue.NE,4),")", sep = '')
+                                                  
+ cat("\nmean posterior = ", round(exp(mu.post),2), ' (95% CrI ', round(exp(lcl.post),2),' - ',round(exp(ucl.post),2),')', sep = '')
+ cat("\nBayes Factor (10) support for alternate hypothesis = ", round(1/ab$bf$bf10,3), sep = '')
+ cat("\nBayes Factor (+0) support for effect > 0 = ", round(ab$bf$bfminus0,3), sep = '')
+ cat("\nBayes Factor (-0) support for effect < 0 = ", round(ab$bf$bfplus0,3), sep = '')
+ cat("\nPosterior probability of Odds Ratio < ", postProb, ' = ', round(postP,3),sep = ' ')
+
+ cat("\n------------------------------------------------------------------------------")
+ cat("\n")
+       
+par(mfrow = c(1,1), cex = 1.15, 
+                    family = 'sans',
+                    bg = 'lightcyan',
+                    font = 2)
+# Upper and lower tails
+l.3sd <- (mu.prior - (3*sd.prior))
+u.3sd <- (mu.prior + (3*sd.prior))
+x <- seq(-1,1,0.0000001)
+
+plot(density(rnorm(x, mu.post, sd.post)), xlab = '',
+                                          axes = F,
+                                          col = 'red',
+                                          xlim = c(log(0.4),log(2)),
+                                          ylab = '',
+                                          main = '',
+                                          lwd = 2)
+
+axis(1, at = c(log(0.4),log(0.5),log(0.6),log(0.7),log(0.8),log(0.9),log(1),log(1.2),log(1.5),log(2)), 
+        labels = c('0.4','0.5','0.6','0.7','0.8','0.9','1.0','1.2','1.5','2.0'), font = 2)
+abline(v=0, lty = 2, lwd = 2)        
+legend('topleft', c('Prior','Posterior','Likelihood'),lty = c(2,1,3),
+                                                      lwd = 2,
+                                                      col = c('green','red','blue'), 
+                                                      title = 'Distribution', bty = 'n')
+# Plot Posterior distribution
+lines(density(rnorm(x, log(mu.prior), sd.prior)), lty = 2, col = 'green', lwd = 2)
+
+# Plot likelihood distribution
+lines(density(rnorm(x, log(mu.lik), sd.lik)), lty = 3, col = 'blue', lwd = 2)
+
+title(paste('Posterior median = ', round(exp(mu.post),3),'  95% CrI:[',round(exp(lcl.post),3),' - ',
+                                                                                  round(exp(ucl.post),3),']', sep = ''), cex = 0.9,
+                                                                                                                         adj = 0)
+
+
+
+                   }
+
+cat("\n------------------------------------------------------------------------------")
+cat("\nBayesian Conjugate normal analysis - Prior to Posterior Analysis: ")
+cat("\nBayesPrPnN Function")
+cat("\nInput values BayesPrPnN(a,b,c,d,mu.prior,sd.prior,H)")
+cat("\na,b,c,d values from two-by-two table (rows exposure and columns outcome)")
+cat("\nmu.prior = mean of prior (Odds Ratio)")
+cat("\nsd.prior = sd of prior (log scale)")
+cat("\nH = Hypothesis (i.e. hypothesised treatment effect OR < 1.0)")
+cat("\n-------------------------------------------------------------------------------")
